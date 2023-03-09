@@ -6,11 +6,12 @@ output: github_document
 ---
 
 In this tutorial we will learn how to get tissue-specific mutated sample frequency with
-data from COSMIC, as explained in their portal (https://cancer.sanger.ac.uk/cosmic/help/faq).
+data from COSMIC, as explained in their [portal](https://cancer.sanger.ac.uk/cosmic/help/faq).
 
 # Firt steps:
 
-1 - Go to the COSMIC download page (https://cancer.sanger.ac.uk/cosmic/download);  
+1 - Go to the [COSMIC download page](https://cancer.sanger.ac.uk/cosmic/download);
+
 2 - Make sure that the portal is showing your desired Human Genome Version (Genome Version button at the top of the page);  
 
 Obs: You will need to log in (or create an account) your COSMIC account to be able do download data.
