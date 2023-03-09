@@ -1,0 +1,522 @@
+Microarray Merging
+================
+Pedro Serio
+2023-03-09
+
+In this tutorial, we are going to discuss about the merging of multiple
+GEO microarray datasets. Since we will work with datasets from different
+studies we will need to get raw data and apply QC to it.
+
+I will present it applying processing methods for Affymetrix and
+Agilent.  
+Note: I **DO NOT** recommend merging datasets from different
+manufacturers, although some may say it is feasible. Moreover, I also
+**DO NOT** recommend merging datasets from panels that are too different
+(e.g. panels with 12000 genes vs panels with 45000 genes), even if they
+are from the same manufacturer
+
+``` r
+#Load the needed packages
+library(GEOquery)
+library(limma)
+library(Biobase)
+library(arrayQualityMetrics)
+library(pheatmap)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(affy)
+library(GEOquery)
+library(frma)
+library(gcrma)
+library(pvca)
+library(sva)
+library(u133x3pcdf)
+library(u133x3p.db)
+library(affyPLM)
+```
+
+### DATASET DOWNLOAD AND QC
+
+``` r
+#Set wd where you want GSE files to be downloaded
+setwd("your/path/name")
+
+#Download the desired dataset
+gds<-getGEO("GSE-ID",GSEMatrix = T)
+
+#Extract the expression set object
+gds<-gds[[1]]#not always necessary
+
+#verify if the gene expression values are logged (also verify it in the website)
+expmax<-max(exprs(gds))
+expmin<-min(exprs(gds))
+```
+
+Obs: GEO datasets can be really chaotic, you may want to download files
+manually.
+
+## AFFYMETRIX DATA:
+
+``` r
+#After downloading the .CEL files for each samples, use:
+myaffy<-ReadAffy()
+
+#Call for annotation
+gds<-getGEO("GSE-ID",GSEMatrix = T)
+#Although the matrix argument is on, you may ignore it
+```
+
+Background correction and normalization:
+
+``` r
+#You may need to use the following to change the cdf name to the one you (e.g. u133x3p)
+myaffy@cdfName<-"u133x3p"
+
+#For small n of samples or individual microarrays
+frma_affy<-frma(myaffy)
+
+#For not merged microarray analysis
+gcnorm<-gcrma(affy14584)
+
+#Save affinity to speed-up re-analyzes
+affinity_info<-compute.affinities("u133x3p")
+#You must do the above first in order to avoid sample name error
+
+#Append GEO annotation in case you are working with GEO dataset
+gds<-gds[[1]]
+myaffy@phenoData@data<-gds@phenoData@data
+gcnorm@phenoData@data<-myaffy@phenoData@data
+```
+
+QC
+
+``` r
+#for loop for plotting and saving MA plots for all samples, raw and processed
+for (i in 1:n)#change according to sample number
+{
+  name = paste("raw_vs_gcRMA_MAplot",i,".jpg",sep="")
+  
+  jpeg(name,res = 300, units = "cm", width = 30,height = 15)
+  par( mfrow= c(1,2) )
+  MAplot(myaffy,which=i)
+  MAplot(gcnorm,which=i)
+  dev.off()
+  print(paste("figure ok",i))#optional
+}
+
+#OBS: you can also download datasets in a for loop, with a GSE list, 
+#although I do not recommend it, since GSE's are frequently deposited in a 
+#different configuration
+
+#Boxplot to verify sample expression
+jpeg("boxplot_gcrma.jpg",units = "cm", width = 25,height = 15,res = 300)
+affy::boxplot(gcnorm)
+dev.off()
+
+#Hist to verify samples intensities before and after processing
+jpeg("intensities_gcrma.jpg",res = 300, units = "cm", width = 25,height = 20)
+par( mfrow= c(2,1) )
+hist(myaffy,ylab='Density',xlab='Log2 intensities',main='Raw data')
+hist(gcnorm,ylab='Density',xlab='Log2 intensities',main='Normalized data')
+dev.off()
+```
+
+# Complemmentary qc analisys
+
+You can use the arrayQualityMetrics function from the
+arrayQualityMetrics package for a fast QC.
+
+``` r
+arrayQualityMetrics(gcnorm,outdir = "QC_gcrma",intgroup = "characteristics_ch1")
+
+#PCA analisys
+
+#Transpose the matrix
+pca <- prcomp(t(exprs(gcnorm)))
+sampleinfo<-pData(gcnorm)
+
+#Join the PCs to the sample information and plot it
+cbind(sampleinfo, pca$x) %>% 
+  ggplot(aes(x = PC1, y=PC2, col=characteristics_ch1,
+             label=paste("Patient", geo_accession))) + geom_point() + geom_text_repel()
+
+
+jpeg(filename = "pca_gcrma.jpg",width = 30,height = 20,units = "cm",res = 300)
+cbind(sampleinfo, pca$x) %>% 
+  ggplot(aes(x = PC1, y=PC2, col=characteristics_ch1,
+             label=paste("Patient", geo_accession))) + geom_point() + geom_text_repel()
+dev.off()
+
+#Correlation matrix
+#Use="c" to avoid error for missing data
+corMatrix <- cor(exprs(gcnorm),use="c")
+
+#Select the column you want to use as group and plot it
+status<-dplyr::select(sampleinfo,10)
+
+jpeg(filename ="corrplot_gcrma.jpg",width = 40,height = 30,units = "cm",res = 300)
+pheatmap(corMatrix,annotation_col=status,annotation_row = status)   
+dev.off()
+```
+
+Bash effects: you will need to verify if there is any batch effect
+between samples from the same dataset and also samples from different
+datasets (which will be the batch effect by itself).
+
+Quoting the explanation by @pappyrus:
+
+1)  adjustment variables and (2) variables of interest. For example, in
+    a gene expression study the variable of interest might an indicator
+    of cancer versus control. The adjustment variables could be the age
+    of the patients, the gender of the patients, and a variable like the
+    date the arrays were processed.
+
+Two model matrices must be made: the “full model” and the “null model”.
+The null model is a model matrix that includes terms for all of the
+adjustment variables but not the variables of interest. The full model
+includes terms for both the adjustment variables and the variables of
+interest. The assumption is that you will be trying to analyze the
+association between the variables of interest and gene expression,
+adjusting for the adjustment variables. The model matrices can be
+created using the model.matrix.
+
+``` r
+#Extract Expressionset, sample info and expression matrix
+gds<-gds[[1]]
+pheno = pData(gcnorm)
+edata = exprs(gcnorm)
+
+#Models examples
+#mod = model.matrix(~as.factor(cancer), data=pheno)
+#mod0 = model.matrix(~1,data=pheno)
+
+#Covariate 
+phenosnames<-colnames(pheno)#you will need to point your batch column and others
+phenosnames[10]<-"batch"
+colnames(pheno)<-phenosnames
+modcombat = model.matrix(~1, data=pheno)
+
+#Parametric adjustment
+combat_edata1 = ComBat(dat=edata, batch=pheno$batch, mod=modcombat)
+```
+
+Reapply the QC plots to your batch-corrected matrix, to verify if the
+correction worked.
+
+## AGILENT DATA
+
+For Agilent data, you can use the getGEO command, or download the
+individual samples files (.txt) manually.  
+You will need to make a table containing a list of your file samples and
+name it “Targets.txt”.
+
+You can do it inside the directory your sample files are.  
+Make sure the only “.txt” files are your samples.
+
+``` r
+filelist<-list.files(pattern = ".txt")
+list<-as.data.frame(filelist)
+colnames(list)<-"FileName"
+write.table(list, "Targets.txt", sep = "\t", row.names = FALSE)
+
+#Prepare samples to be read. I recommend adding some annotations about the samples
+#if you have any
+targetinfo <- readTargets('Targets.txt', sep = '\t')
+
+#Converts the data to a RGList (two-colour [red-green] array)
+project <- read.maimages(targetinfo, source = 'agilent')
+
+#Perform background correction on the fluorescent intensities
+project.bgcorrect <- backgroundCorrect(project, method = 'normexp', offset = 16)
+
+#Normalize the data with the 'loess' method
+project.bgcorrect.norm <- normalizeWithinArrays(project.bgcorrect, 
+                                                method = "loess")
+
+#For duplicated probes in each sample, replace values with the average
+project.bgcorrect.norm.avg <- avereps(
+  project.bgcorrect.norm,
+  ID = project.bgcorrect.norm$genes$ProbeName)
+```
+
+Collect annotation data from GEO dataset.
+
+``` r
+gds<-getGEO("GSE-ID",GSEMatrix = T)
+```
+
+QC
+
+``` r
+arrayQualityMetrics(project.bgcorrect.norm.avg,outdir = "QC_agilent")
+
+#plot ma plots
+plotMA3by2(project,prefix = "raw_",)#maplots before normalization
+plotMA3by2(project.bgcorrect.norm.avg,prefix = "normalized_")#after
+
+#boxplot samples
+jpeg("rene_boxplot_normalized.jpg",units = "cm", width = 20,height = 20,res = 300)
+boxplot(
+  project.bgcorrect.norm.avg$M,
+  col = "royalblue",
+  las = 2)
+dev.off()
+
+#verify intensities
+jpeg("channels_dens_rene.jpg",units = "cm", width = 20,height = 30,res = 300)
+par(mfrow=c(3,1))
+plotDensities(project,main = "RG Densities - no BG correction")
+plotDensities(project.bgcorrect,main = "RG Densities - BG correction")
+plotDensities(project.bgcorrect.norm.avg,main = "RG Densities - BG correction - norm&avg")
+dev.off()
+
+# MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+pca <- prcomp(t(project.bgcorrect.norm.avg$M))
+gds<-gds[[1]]
+sampleinfo<-pData(gds)
+
+jpeg(filename = "pca.jpg",width = 30,height = 20,units = "cm",res = 300)
+cbind(sampleinfo, pca$x) %>% 
+  ggplot(aes(x = PC1, y=PC2, 
+             col=batch,label=sample)) + geom_point() + geom_text_repel(max.overlaps = 20)
+dev.off()
+
+#if no sampleinfo, simpler with:
+jpeg(filename = "pca.jpg",width = 30,height = 20,units = "cm",res = 300)
+ggplot2::autoplot(pca, shape=F)
+dev.off()
+
+#Corrleation matrix
+#use="c" stops an error if there are any missing data points
+corMatrix <- cor(project.bgcorrect.norm.avg$M,use="c")
+sampleinfo<-as.data.frame(sampleinfo)
+rownames(sampleinfo)<-sampleinfo$sample
+status<-dplyr::select(sampleinfo,3)
+pheatmap(corMatrix,annotation_col=status,annotation_row = status)   
+pheatmap(corMatrix)
+
+jpeg(filename ="corrplot.jpg",width = 45,height = 35,units = "cm",res = 300)
+pheatmap(corMatrix,annotation_col=status,annotation_row = status)   
+dev.off()
+```
+
+Extract batch effects.
+
+``` r
+#extract Expressionset object
+gds<-gds[[1]]
+
+#extract sample info
+pheno = sampleinfo
+
+#extract expression matrix
+edata = project.bgcorrect.norm.avg$M
+
+#models examples
+#mod = model.matrix(~as.factor(cancer), data=pheno)
+#mod0 = model.matrix(~1,data=pheno)
+
+#covariate 
+phenosnames<-colnames(pheno)
+phenosnames[10]<-"batch"
+colnames(pheno)<-phenosnames
+
+modcombat = model.matrix(~1, data=pheno)
+
+# parametric adjustment
+combat_edata1 = ComBat(dat=edata, batch=pheno$batch, mod=modcombat)
+
+#transpose the matrix
+pca <- prcomp(t(combat_edata1))
+
+sampleinfo<-pData(gcnorm)
+
+## Join the PCs to the sample information
+cbind(sampleinfo, pca$x) %>% 
+  ggplot(aes(x = PC1, y=PC2, col=characteristics_ch1,
+             label=paste("Patient", geo_accession))) + geom_point() + geom_text_repel()
+
+jpeg(filename = "pca_combat.jpg",width = 30,height = 20,units = "cm",res = 300)
+cbind(sampleinfo, pca$x) %>% 
+  ggplot(aes(x = PC1, y=PC2, col=batch,
+             label=sample)) + geom_point() + geom_text_repel(max.overlaps = 20)
+dev.off()
+
+#if no sampleinfo, simpler with:
+ggplot2::autoplot(pca, shape=F)
+
+#correlation matrix
+#use="c" stops an error if there are any missing data points
+corMatrix <- cor(combat_edata1,use="c")
+sampleinfo<-as.data.frame(sampleinfo)
+rownames(sampleinfo)<-sampleinfo$sample
+status<-dplyr::select(sampleinfo,3)
+pheatmap(corMatrix,annotation_col=status,annotation_row = status)   
+
+jpeg(filename ="corrplot_combat.jpg",width = 45,height = 35,units = "cm",res = 300)
+pheatmap(corMatrix,annotation_col=status,annotation_row = status)   
+dev.off()
+```
+
+### ANNOTATE AND MERGE
+
+Now that you have your datasets ready its time to annotate (if not
+already done) and merge.
+
+``` r
+#extract gene symbols
+genesymbols<-fData(gds)[,'GENE_SYMBOL']#this may change between datasets
+
+#extract gene expression matrix
+exprmatrix<-exprs(gds)
+
+#extract sample data table
+sampleinfo<-pData(gds)
+
+#annotate matrix with gene symbols
+annotated_exprmatrix<-cbind(genesymbols,exprmatrix)
+samplenames<-(sampleinfo[,1])#this may change between datasets
+genenames<-"gene_symbols"
+samplenames<-append(genenames,samplenames)
+annotated_exprmatrix<-rbind(samplenames,annotated_exprmatrix)
+
+#save original and annotated matrix 
+write.table(exprmatrix,file = paste("GSE-ID","matrix.txt"),
+            sep = "\t",row.names = T)
+write.table(annotated_exprmatrix,file = paste("GSE-ID","annotated_matrix.txt"),
+            sep = "\t",row.names = T)
+
+#pData(GSE-ID) ## print the sample information
+#fData(GSE-ID) ## print the gene annotation
+#exprs(GSE-ID) ## print the expression data
+```
+
+Sometimes the datasets will not have an annotation table ready to use.
+If this is the case, you can download the table of your microarray panel
+at the GEO Database, searching for the panel ID.
+
+You can try to use the base R “merge” function or even “cbind”, if rows
+follow the same order.
+
+``` r
+annotated_GSE<-base::merge(
+  x=annot_table,
+  y=exp_matrix,
+  by.x="ID",# name of the probe column, frequently named "ID", but may change 
+  #according to the microarray annotation table
+  by.y="probe_id"#you will need to reconvert your row index back to a column, if
+  #you have converted it
+)
+
+#using cbind
+annotated_GSE<-cbind(annot_table,exp_matrix)
+```
+
+OBS: Make sure that your final matrix also have the ENTREZ_GENE_ID
+column.  
+The ENTREZ GENE ID is a global identifier that is used in different
+probe panels thus, is the easiest way to merge your datasets.
+
+In case rows are in different order, you may reorder it using the rows
+index(genes).
+
+You may also need to exclude duplicated probes in your matrix to be able
+to merge it.
+
+First, reorder your matrix rows according to a decreasing gene
+expression value of one of your samples (GSM).
+
+``` r
+reordered_annot=exp_matrix[order(exp_matrix$GSM-ID,decreasing=T),]
+
+#exclude duplicated probes
+filtered_matrix=filtered_matrix[which(!duplicated(filtered_matrix$`Gene Symbol`)),]
+
+#You can also clean your matrix with some extra #optional commands:
+
+# Filter out unannotated probes
+annottab <- subset(annotated_matrix, Gene_Symbol != '')
+# Filter out probes with more than one Gene Symbol 
+annottab <- subset(annottab, !grepl('///', Gene_Symbol))
+# Filter out NAs
+annottab <- annottab[complete.cases(annottab),]
+# Filter out probes absent in expression matrix
+annotatb <- annottab[annottab$Probe %in% rownames(exp_matrix),]
+genes2probes <- split(annottab$Probe, annottab$Symbol)
+```
+
+Merge your datasets using the ENTREZ_GENE_ID column.
+
+``` r
+merged_dataset<-merge(
+  x=dataset1,
+  y=dataset2,
+  by='ENTREZ_GENE_ID'
+)
+```
+
+Now we are going to reduce the batch effect again. Remember that this
+time we already know the batch effect, which is the sample dataset
+origin. Make a dataframe (sampleinfo) with a column with the sample
+names of your merged matrix and a batch column with the original dataset
+ID, as factor.
+
+Option 1: use the combat command, as described before; Option 2: use the
+limma removeBatchEffect command;
+
+``` r
+nobatch_matix<-removeBatchEffect(expr_matrix,batch = sampleinfo$batch)
+
+#Now we need to verify if we did the batch effect removal correctly
+
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+pca <- prcomp(t(nobatch_matix))
+
+## Join the PCs to the sample information
+jpeg(filename = "nobatch_merged_pca.jpg",width = 30,height = 20,units = "cm",res = 300)
+cbind(sampleinfo, pca$x) %>% 
+  ggplot(aes(x = PC1, y=PC2, col=characteristics_ch1,
+             label=paste("Patient", geo_accession))) + geom_point() + geom_text_repel()
+dev.off()
+```
+
+### DEGs
+
+Now that we have a single gene expression matrix, we can fit it in a
+linear model and make a Differentially Expressed Genes (DEGs) analysis.
+In this example the intersect is not used (“\~0”), but you must adapt
+your design according to your aim.
+
+Take a look at the [great
+guide](https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/designmatrices.html#studies-with-multiple-factors)
+written by Law CW and colleagues (Law CW. 2020) to a detailed
+explanation about study designs in linear models.
+
+``` r
+# Create the study design
+design <- model.matrix(~ 0 + factor(sampleinfo$group, 
+                                    levels = c('GroupA', 'GroupB')))
+colnames(design) <- c('A', 'B')
+
+# Fit the linear model on the study's data
+project.fitmodel <- lmFit(
+  expr_matrix,
+  design)
+
+# Applying the empirical Bayes method to the fitted values
+project.fitmodel.eBayes <- eBayes(project.fitmodel)
+names(project.fitmodel.eBayes)
+
+# Make individual contrasts
+CaseControl <- makeContrasts(CaseControl = 'A-B', levels = design)
+CaseControl.fitmodel <- contrasts.fit(project.fitmodel.eBayes, CaseControl)
+CaseControl.fitmodel.eBayes <- eBayes(CaseControl.fitmodel)
+
+degs<-topTable(
+  CaseControl.fitmodel.eBayes,
+  adjust = 'BH',
+  coef = "CaseControl",
+  number = 99999,
+  p.value = 1)
+```
