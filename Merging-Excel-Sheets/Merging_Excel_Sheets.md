@@ -1,16 +1,21 @@
----
-title: "Merging Excel Sheets"
-author: "Pedro Serio"
-date: "2023-03-10"
-output: github_document
----
+Merging Excel Sheets
+================
+Pedro Serio
+2023-03-10
 
-This will be a fast one. I made this tutorial because some people comes to me with excel files with sheets divided by samples/subjects/etc. The problem is that now they have 30 sheets with a lot of lines and columns and they want to merge it.  
-Although doing it manually is possible, we all know how hands-on excel is error-prone (and in this case, tedious and time consuming). That being said, here is a simple tutorial in how to merge excel sheets in a single data frame.
+This will be a fast one. I made this tutorial because some people comes
+to me with excel files with sheets divided by samples/subjects/etc. The
+problem is that now they have 30 sheets with a lot of lines and columns
+and they want to merge it.  
+Although doing it manually is possible, we all know how hands-on excel
+is error-prone (and in this case, tedious and time consuming). That
+being said, here is a simple tutorial in how to merge excel sheets in a
+single data frame.
 
-Set your working directory (where your excel file is) and load the needed packages
-```{r, eval=TRUE,echo=TRUE,warning=FALSE,message=FALSE}
+Set your working directory (where your excel file is) and load the
+needed packages
 
+``` r
 library(dplyr)
 library(xlsx)
 library(readxl)
@@ -19,11 +24,14 @@ library(rio)
 
 # Example Data
 
-The code below produces an excel file with 5 sheets, 2000 lines and 5 columns, each.  
-Obs: I am pretty sure that there is an easier way to do it, but I could not figure out how to make for loops and the `paste()` function work without the `xlsx` package complaining. If you have the solution, please, reach out to me.
+The code below produces an excel file with 5 sheets, 2000 lines and 5
+columns, each.  
+Obs: I am pretty sure that there is an easier way to do it, but I could
+not figure out how to make for loops and the `paste()` function work
+without the `xlsx` package complaining. If you have the solution,
+please, reach out to me.
 
-```{r, eval=TRUE,echo=TRUE}
-
+``` r
 #Make a dataframe.
 df <- as.data.frame(matrix(runif(n=50000, min=1, max=20), nrow=10000))
 
@@ -53,8 +61,11 @@ write.xlsx(subset(full_df, subset=group=="E"),
 ```
 
 # Merge
-Use the `import_list()` command from the `rio` package to merge the sheets and its done!
-```{r, eval=TRUE,echo=TRUE}
+
+Use the `import_list()` command from the `rio` package to merge the
+sheets and its done!
+
+``` r
 data_list <- import_list("example.xlsx", setclass = "tbl", rbind = TRUE)
 
 #If you want, you can create and additional column to keep trace of the sheet of origin.
@@ -62,6 +73,11 @@ data_list <- import_list("example.xlsx", setclass = "tbl", rbind = TRUE)
 #Make a sheet list
 excel_file<-"example.xlsx"
 excel_sheets(excel_file)
+```
+
+    ## [1] "sheet1" "sheet2" "sheet3" "sheet4" "sheet5"
+
+``` r
 sheets_list<-as.vector(excel_sheets(excel_file))
 
 #Count lines and convert each file line to the name of the original sheet
@@ -74,4 +90,3 @@ data_list<-cbind(data_list,SHEET_ID)
 #Save it
 write.table(data_list,"merged_example.txt", sep = "\t",row.names = FALSE)
 ```
-
